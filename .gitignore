@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# ARGUS-9 local files
+argus9.db
+.env
+temp/
+dist/
+dist-ssr/
+
