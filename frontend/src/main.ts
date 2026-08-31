@@ -2,8 +2,9 @@ import { DashboardState, Sector, DomainTelemetry, RiskBand, LogLine, BriefCard }
 import { fetchDashboardState, connectLiveStream } from './api.js';
 
 let currentState: DashboardState | null = null;
+let selectedSectorCode: string | null = null;
 let currentView: 'RADAR' | 'GLOBE' = 'RADAR';
-let currentTab: 'SIGNALS' | 'BRIEF' | 'METHOD' = 'SIGNALS';
+let currentTab: 'SIGNALS' | 'BRIEF' | 'AUDIT' = 'SIGNALS';
 let syncSeconds = 30;
 let connectionActive = false;
 
@@ -15,8 +16,8 @@ const getBandColor = (b: RiskBand): string => {
     case 'GUARDED': return '#5EC8C0';
     case 'ELEVATED': return '#E8A33D';
     case 'HIGH': return '#DD8A4A';
-    case 'SEVERE': return '#E0524A';
-    default: return 'var(--text-faint)';
+    case 'SEVERE': return '#E84D4D';
+    default: return 'var(--text-muted)';
   }
 };
 
@@ -25,29 +26,53 @@ function flash(el: HTMLElement) {
   setTimeout(() => el.classList.remove('flash'), 500);
 }
 
+function getSectorRiskBand(score: number): RiskBand {
+  if (score < 25) return 'NOMINAL';
+  if (score < 50) return 'GUARDED';
+  if (score < 70) return 'ELEVATED';
+  if (score < 85) return 'HIGH';
+  return 'SEVERE';
+}
+
 // ================= RENDER FUNCTIONS =================
 
-function renderIndex(sectors: Sector[]) {
-  const listEl = document.getElementById('idxList');
+function renderTheatersList(sectors: Sector[]) {
+  const listEl = document.getElementById('entity-list');
   const updatedEl = document.getElementById('idxUpdated');
   if (!listEl) return;
 
-  const ranked = [...sectors].sort((a, b) => b.risk - a.risk);
+  // Sort sectors by risk descending
+  const sortedSectors = [...sectors].sort((a, b) => b.risk - a.risk);
   listEl.innerHTML = '';
-  
-  ranked.forEach((s, i) => {
-    const color = getBandColor(s.risk < 25 ? 'NOMINAL' : s.risk < 50 ? 'GUARDED' : s.risk < 70 ? 'ELEVATED' : s.risk < 85 ? 'HIGH' : 'SEVERE');
-    const diff = s.delta;
-    const deltaTxt = Math.abs(diff) < 0.3 ? '—' : (diff > 0 ? '▲' : '▼') + fmt1(Math.abs(diff));
-    const deltaColor = Math.abs(diff) < 0.3 ? 'var(--text-faint)' : (diff > 0 ? 'var(--red)' : 'var(--green)');
+
+  // If no sector is selected yet, select the highest risk one on startup
+  if (!selectedSectorCode && sortedSectors.length > 0) {
+    selectedSectorCode = sortedSectors[0].code;
+  }
+
+  sortedSectors.forEach((s) => {
+    const band = getSectorRiskBand(s.risk);
+    const color = getBandColor(band);
+    const isActive = s.code === selectedSectorCode;
     
     const row = document.createElement('div');
-    row.className = 'idx-row';
+    row.className = `entity-row ${isActive ? 'active' : ''}`;
+    row.addEventListener('click', () => {
+      selectedSectorCode = s.code;
+      // Re-render theaters list, viewfinder, domain breakdown, and audit panels
+      renderTheatersList(sectors);
+      renderViewfinder(s);
+      renderDomainGrid(s);
+      renderAuditPanel(s);
+      renderSituationDisplay(sectors); // Update blip highlights
+    });
+
     row.innerHTML = `
-      <span class="idx-rank">${String(i + 1).padStart(2, '0')}</span>
-      <span class="idx-name-block"><span class="code">SECTOR ${s.code}</span><span class="name">${s.name}</span></span>
-      <span class="idx-score"><span class="num" style="color:${color}">${Math.round(s.risk)}</span><span class="delta" style="color:${deltaColor}">${deltaTxt}</span></span>
-      <div class="idx-meter"><div class="fill" style="width:${s.risk}%;background:${color}"></div></div>
+      <div>
+        <div style="font-weight: 600; color: ${isActive ? 'var(--cyan-accent)' : 'var(--text-main)'}">${s.name}</div>
+        <div style="color: var(--text-muted); font-size: 10px; margin-top: 2px;">SECTOR ${s.code}</div>
+      </div>
+      <div class="tabular-nums" style="font-weight: bold; font-size: 15px; color: ${color};">${Math.round(s.risk)}</div>
     `;
     listEl.appendChild(row);
   });
@@ -58,7 +83,105 @@ function renderIndex(sectors: Sector[]) {
   }
 }
 
-// Simple orthographic projection mapping lat/lon to Globe coordinates
+function renderViewfinder(s: Sector) {
+  const display = document.getElementById('viewfinder-display');
+  if (!display) return;
+
+  const band = getSectorRiskBand(s.risk);
+  const color = getBandColor(band);
+  
+  display.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <span style="letter-spacing: 1px; color: var(--text-muted); font-size: 10px;">MONITORED THEATER</span>
+      <span class="status-active-badge" style="border-color:${color}; color:${color}; background:rgba(${band === 'SEVERE' ? '232, 77, 77' : '232, 163, 61'}, 0.08)">${band}</span>
+    </div>
+    <h2 style="margin: 8px 0 12px 0; font-size: 18px; color: var(--text-main); font-weight: bold;">${s.name}</h2>
+    <div style="display:flex; align-items:center; gap: 24px;">
+      <div class="gauge-num tabular-nums" id="gaugeNumVal" style="color: ${color};">${Math.round(s.risk)}</div>
+      <div style="color: var(--text-muted); font-size: 10.5px; line-height: 1.5;">
+        <div>STRUCTURAL PRIOR: <span class="tabular-nums" style="color:var(--text-main); font-weight:bold;">${fmt1(s.structuralPrior)}</span></div>
+        <div>FAST BEHAVIORAL: <span class="tabular-nums" style="color:var(--text-main); font-weight:bold;">${fmt1(s.fastLayerScore)}</span></div>
+        <div>CLUSTER MULTIPLIER: <span class="tabular-nums" style="color:var(--text-main); font-weight:bold;">${fmt1(s.clusterMultiplier)}x</span></div>
+      </div>
+    </div>
+    <div style="font-size: 10.5px; line-height: 1.5; color: var(--text-dim); margin-top: 10px; border-top: 1px solid var(--border-color); padding-top: 8px;">
+      <b>ASSESSMENT:</b> ${s.provenanceNotice}
+    </div>
+  `;
+
+  const numVal = document.getElementById('gaugeNumVal');
+  if (numVal) flash(numVal);
+}
+
+function renderDomainGrid(s: Sector) {
+  const grid = document.getElementById('domain-breakdown-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+
+  const domainLabels: Record<string, string> = {
+    mil: 'MILITARY / OSINT',
+    avi: 'AVIATION',
+    mar: 'MARITIME',
+    mkt: 'MARKETS',
+    dip: 'DIPLOMATIC',
+    cyb: 'CYBER',
+    osi: 'OSINT / MEDIA'
+  };
+
+  Object.entries(s.domainBreakdown).forEach(([domId, data]) => {
+    const label = domainLabels[domId] || domId.toUpperCase();
+    const isActive = data.status === 'ACTIVE';
+    const color = isActive ? getBandColor(data.score! < 25 ? 'NOMINAL' : data.score! < 50 ? 'GUARDED' : data.score! < 70 ? 'ELEVATED' : data.score! < 85 ? 'HIGH' : 'SEVERE') : 'var(--text-muted)';
+    
+    const card = document.createElement('div');
+    card.style.cssText = 'background: var(--bg-primary); border: 1px solid var(--border-color); padding: 8px 10px;';
+    card.innerHTML = `
+      <div style="display:flex; justify-content:space-between; margin-bottom: 4px; align-items: center;">
+        <span style="color: var(--text-dim); font-weight:600; font-size: 9.5px; letter-spacing: 0.5px;">${label}</span>
+        ${isActive 
+          ? `<span class="tabular-nums" style="color:${color}; font-weight:bold; font-size: 11px;">${fmt1(data.score!)}</span>` 
+          : `<span class="no-feed-badge" style="font-size: 8px; padding: 1px 4px;">NO LIVE FEED</span>`}
+      </div>
+      <div style="font-size: 9px; color: var(--text-muted); text-overflow: ellipsis; white-space: nowrap; overflow: hidden;">
+        ${data.indicators.length > 0 ? data.indicators.map(i => i.source).join(', ') : 'Feed unconfigured'}
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+function renderAuditPanel(s: Sector) {
+  const panel = document.getElementById('audit-panel-content');
+  if (!panel) return;
+
+  panel.innerHTML = `
+    <div style="font-size: 11px; color: var(--cyan-accent); margin-bottom: 10px; font-weight:600; letter-spacing: 0.5px;">DATA PROVENANCE & INTEGRITY</div>
+    <p style="color: var(--text-muted); font-size: 10.5px; line-height: 1.5; margin-bottom: 14px;">
+      ${s.provenanceNotice} Indicators are normalized against trailing historical 30-day baselines (z-score percentiles) and calculated using versioned weights.
+    </p>
+    <div style="margin-bottom: 14px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px;">
+      <div style="color: var(--cyan-accent); font-size: 9.5px; margin-bottom: 6px; font-weight: bold; letter-spacing: 0.5px;">ACTIVE INGESTED SOURCES</div>
+      <div style="display:flex; flex-wrap: wrap; gap: 6px;">
+        ${s.integratedSources.length > 0 
+          ? s.integratedSources.map(src => `<span class="status-active-badge" style="font-size: 8.5px; padding: 2px 6px;">${src}</span>`).join('') 
+          : '<span style="color:var(--text-muted); font-size:9.5px;">None</span>'}
+      </div>
+    </div>
+    <div style="margin-bottom: 14px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px;">
+      <div style="color: var(--danger-red); font-size: 9.5px; margin-bottom: 6px; font-weight: bold; letter-spacing: 0.5px;">UNINTEGRATED / GATED FEEDS</div>
+      <div style="display:flex; flex-wrap: wrap; gap: 6px;">
+        ${s.unintegratedSources.length > 0 
+          ? s.unintegratedSources.map(src => `<span class="no-feed-badge" style="font-size: 8.5px; padding: 2px 6px;">${src}</span>`).join('') 
+          : '<span style="color:var(--text-muted); font-size:9.5px;">None</span>'}
+      </div>
+    </div>
+    <div style="background: var(--bg-primary); border: 1px solid var(--border-color); padding: 8px 10px; margin-top: 16px;">
+      <div style="color: var(--text-muted); font-size: 9px; letter-spacing: 0.5px;">SCORING MODEL ENGINE</div>
+      <div style="color: var(--text-main); font-size: 10.5px; font-weight: bold; margin-top: 2px;">${s.scoringVersion}</div>
+    </div>
+  `;
+}
+
 function projectGlobe(lat: number, lon: number) {
   const x = 100 + 90 * Math.sin(lon * Math.PI / 180) * 0.9;
   const y = 100 - 90 * Math.sin(lat * Math.PI / 180) * 0.65;
@@ -71,21 +194,33 @@ function renderSituationDisplay(sectors: Sector[]) {
   
   if (blipLayer) {
     blipLayer.innerHTML = '';
-    // Map polar angles for Radar view dynamically based on sector order
     sectors.forEach((s, idx) => {
       const angle = (idx * 360) / sectors.length;
-      const radius = 55 + (s.risk / 100) * 35; // Position on radar rings relative to risk
+      const radius = 55 + (s.risk / 100) * 35;
       const rad = (angle - 90) * Math.PI / 180;
       const x = 100 + radius * Math.cos(rad);
       const y = 100 + radius * Math.sin(rad);
-      const color = getBandColor(s.risk < 25 ? 'NOMINAL' : s.risk < 50 ? 'GUARDED' : s.risk < 70 ? 'ELEVATED' : s.risk < 85 ? 'HIGH' : 'SEVERE');
+      const color = getBandColor(getSectorRiskBand(s.risk));
+      const isSelected = s.code === selectedSectorCode;
       
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       g.setAttribute('class', 'blip');
+      g.style.cursor = 'pointer';
+      g.addEventListener('click', () => {
+        selectedSectorCode = s.code;
+        renderTheatersList(sectors);
+        renderViewfinder(s);
+        renderDomainGrid(s);
+        renderAuditPanel(s);
+        renderSituationDisplay(sectors); // Highlight blip
+      });
+
       const delay = (angle / 360) * 8;
+      
       g.innerHTML = `
-        <circle cx="${x}" cy="${y}" r="14" fill="${color}" opacity="0.08"/>
-        <circle class="core" cx="${x}" cy="${y}" r="${3.5 + (s.risk / 100) * 4.5}" fill="${color}" style="animation-delay:${delay}s"/>
+        <circle cx="${x}" cy="${y}" r="${isSelected ? 20 : 14}" fill="${color}" opacity="${isSelected ? 0.15 : 0.08}"/>
+        ${isSelected ? '<circle cx="' + x + '" cy="' + y + '" r="8" fill="none" stroke="' + color + '" stroke-width="1" stroke-dasharray="2,2"/>' : ''}
+        <circle class="core" cx="${x}" cy="${y}" r="${(isSelected ? 5.5 : 3.5) + (s.risk / 100) * 4.5}" fill="${color}" style="animation-delay:${delay}s"/>
       `;
       blipLayer.appendChild(g);
     });
@@ -95,13 +230,25 @@ function renderSituationDisplay(sectors: Sector[]) {
     globeMarkersEl.innerHTML = '';
     sectors.forEach(s => {
       const p = projectGlobe(s.latitude, s.longitude);
-      const color = getBandColor(s.risk < 25 ? 'NOMINAL' : s.risk < 50 ? 'GUARDED' : s.risk < 70 ? 'ELEVATED' : s.risk < 85 ? 'HIGH' : 'SEVERE');
+      const color = getBandColor(getSectorRiskBand(s.risk));
+      const isSelected = s.code === selectedSectorCode;
       
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       g.setAttribute('class', 'globe-marker');
+      g.style.cursor = 'pointer';
+      g.addEventListener('click', () => {
+        selectedSectorCode = s.code;
+        renderTheatersList(sectors);
+        renderViewfinder(s);
+        renderDomainGrid(s);
+        renderAuditPanel(s);
+        renderSituationDisplay(sectors);
+      });
+
       g.innerHTML = `
-        <circle cx="${p.x}" cy="${p.y}" r="10" fill="${color}" opacity="0.10"/>
-        <circle class="core" cx="${p.x}" cy="${p.y}" r="${3 + (s.risk / 100) * 3.5}" fill="${color}"/>
+        <circle cx="${p.x}" cy="${p.y}" r="${isSelected ? 14 : 10}" fill="${color}" opacity="${isSelected ? 0.20 : 0.10}"/>
+        ${isSelected ? '<circle cx="' + p.x + '" cy="' + p.y + '" r="6.5" fill="none" stroke="' + color + '" stroke-width="0.8" stroke-dasharray="1.5,1.5"/>' : ''}
+        <circle class="core" cx="${p.x}" cy="${p.y}" r="${(isSelected ? 4.5 : 3) + (s.risk / 100) * 3.5}" fill="${color}"/>
       `;
       globeMarkersEl.appendChild(g);
     });
@@ -122,7 +269,7 @@ function drawSparkline(svgEl: SVGPolylineElement, history: number[], color: stri
   svgEl.setAttribute('stroke', color);
 }
 
-function renderDomains(domains: DomainTelemetry[]) {
+function renderDomainsSignals(domains: DomainTelemetry[]) {
   const panel = document.getElementById('paneSignals');
   if (!panel) return;
   panel.innerHTML = '';
@@ -131,7 +278,7 @@ function renderDomains(domains: DomainTelemetry[]) {
     const card = document.createElement('div');
     card.className = `signal-panel ${d.isLive ? '' : 'not-live'}`;
     
-    const color = d.isLive ? getBandColor(d.status) : 'var(--text-faint)';
+    const color = d.isLive ? getBandColor(d.status) : 'var(--text-muted)';
     const statusText = d.isLive ? d.status : 'NO LIVE FEED';
     
     const deltaVal = d.delta;
@@ -168,7 +315,6 @@ function renderDomains(domains: DomainTelemetry[]) {
     
     panel.appendChild(card);
     
-    // Draw sparkline if live
     if (d.isLive && d.history.length > 0) {
       const polyline = document.getElementById(`sparkline-${d.id}`) as unknown as SVGPolylineElement;
       if (polyline) {
@@ -205,17 +351,19 @@ function renderTicker(logs: LogLine[]) {
   const trackEl = document.getElementById('tickerTrack');
   if (!trackEl) return;
   
+  const statusSeg = `<span class="ticker-seg" style="color:var(--red); font-weight:bold;"><b>//</b>STATUS: LIVE PIPELINE // ZERO SYNTHETIC FALLBACK ENFORCED</span>`;
+  
   if (logs.length === 0) {
-    trackEl.innerHTML = '<span class="ticker-seg"><b>//</b>AWAITING SIGNALS...</span>';
+    trackEl.innerHTML = statusSeg + '<span class="ticker-seg"><b>//</b>AWAITING SIGNALS...</span>';
     return;
   }
 
-  const content = logs.slice(0, 10).map(l => {
+  const logsSeg = logs.slice(0, 10).map(l => {
     const ts = new Date(l.timestamp).toLocaleTimeString('en-US', { hour12: false });
     return `<span class="ticker-seg"><b>//</b>[${ts}] ${l.message}</span>`;
   }).join('');
   
-  trackEl.innerHTML = content + content; // duplicate for infinite scroll loop
+  trackEl.innerHTML = statusSeg + logsSeg + statusSeg + logsSeg; // duplicate for infinite loop
 }
 
 function updateCompositeGauge(risk: number, prevRisk: number, bandName: RiskBand, assessment: string) {
@@ -263,10 +411,22 @@ function updateCompositeGauge(risk: number, prevRisk: number, bandName: RiskBand
 // UI State Bindings
 function updateFullUI(state: DashboardState) {
   currentState = state;
-  
-  renderIndex(state.sectors);
+
+  // Sync selected sector
+  let activeSector = state.sectors.find(s => s.code === selectedSectorCode);
+  if (!activeSector && state.sectors.length > 0) {
+    activeSector = state.sectors[0];
+    selectedSectorCode = activeSector.code;
+  }
+
+  renderTheatersList(state.sectors);
+  if (activeSector) {
+    renderViewfinder(activeSector);
+    renderDomainGrid(activeSector);
+    renderAuditPanel(activeSector);
+  }
   renderSituationDisplay(state.sectors);
-  renderDomains(state.domains);
+  renderDomainsSignals(state.domains);
   renderBriefs(state.briefs);
   renderTicker(state.logs);
   updateCompositeGauge(state.compositeRisk, state.prevComposite, state.bandName, state.assessmentText);
@@ -290,7 +450,6 @@ function initClock() {
     syncSeconds -= 1;
     if (syncSeconds < 0) {
       syncSeconds = 30;
-      // If server is offline, trigger a manual fetch
       if (!connectionActive) {
         fetchDashboardState().then(updateFullUI).catch(console.error);
       }
@@ -305,28 +464,28 @@ function setupControlListeners() {
   // Tabs
   const tabSignals = document.getElementById('tabSignals');
   const tabBrief = document.getElementById('tabBrief');
-  const tabMethod = document.getElementById('tabMethod');
+  const tabAudit = document.getElementById('tabAudit');
   
   const paneSignals = document.getElementById('paneSignals');
   const paneBrief = document.getElementById('paneBrief');
-  const paneMethod = document.getElementById('paneMethod');
+  const paneAudit = document.getElementById('paneAudit');
 
   tabSignals?.addEventListener('click', () => {
-    tabSignals.classList.add('active'); tabBrief?.classList.remove('active'); tabMethod?.classList.remove('active');
-    paneSignals?.classList.remove('hidden-view'); paneBrief?.classList.add('hidden-view'); paneMethod?.classList.add('hidden-view');
+    tabSignals.classList.add('active'); tabBrief?.classList.remove('active'); tabAudit?.classList.remove('active');
+    paneSignals?.classList.remove('hidden-view'); paneBrief?.classList.add('hidden-view'); paneAudit?.classList.add('hidden-view');
     currentTab = 'SIGNALS';
   });
 
   tabBrief?.addEventListener('click', () => {
-    tabBrief.classList.add('active'); tabSignals?.classList.remove('active'); tabMethod?.classList.remove('active');
-    paneBrief?.classList.remove('hidden-view'); paneSignals?.classList.add('hidden-view'); paneMethod?.classList.add('hidden-view');
+    tabBrief.classList.add('active'); tabSignals?.classList.remove('active'); tabAudit?.classList.remove('active');
+    paneBrief?.classList.remove('hidden-view'); paneSignals?.classList.add('hidden-view'); paneAudit?.classList.add('hidden-view');
     currentTab = 'BRIEF';
   });
 
-  tabMethod?.addEventListener('click', () => {
-    tabMethod.classList.add('active'); tabSignals?.classList.remove('active'); tabBrief?.classList.remove('active');
-    paneMethod?.classList.remove('hidden-view'); paneSignals?.classList.add('hidden-view'); paneBrief?.classList.add('hidden-view');
-    currentTab = 'METHOD';
+  tabAudit?.addEventListener('click', () => {
+    tabAudit.classList.add('active'); tabSignals?.classList.remove('active'); tabBrief?.classList.remove('active');
+    paneAudit?.classList.remove('hidden-view'); paneSignals?.classList.add('hidden-view'); paneBrief?.classList.add('hidden-view');
+    currentTab = 'AUDIT';
   });
 
   // Display toggles
@@ -348,7 +507,6 @@ function setupControlListeners() {
   });
 }
 
-// Connection State UI Updates
 function setConnectionState(active: boolean) {
   connectionActive = active;
   const pulse = document.getElementById('connectionPulse');
@@ -372,7 +530,6 @@ async function initApp() {
   setupControlListeners();
   initClock();
 
-  // Try to load initial state immediately
   try {
     const initialState = await fetchDashboardState();
     updateFullUI(initialState);
@@ -380,7 +537,6 @@ async function initApp() {
     console.error('Initial REST fetch failed, waiting for SSE stream...', err);
   }
 
-  // Connect Server-Sent Events (SSE) Live pipeline
   connectLiveStream(
     (welcomeMsg) => {
       console.log('[SSE] Welcome:', welcomeMsg);

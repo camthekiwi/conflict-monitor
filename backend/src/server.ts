@@ -13,7 +13,7 @@ import {
   saveLog
 } from './db.js';
 import { runAllWorkersOnStartup, startScheduler } from './workers/scheduler.js';
-import { computeCompositeRisk } from './scoring.js';
+import { computeCompositeRisk, normalizeIndicator } from './scoring.js';
 import { DashboardState, Sector, DomainTelemetry, RiskBand, LogLine, BriefCard } from './shared/types.js';
 
 const app = express();
@@ -66,6 +66,98 @@ function compileDashboardState(): DashboardState {
     const history = getCompositeScoreHistory(ent.code, 2);
     const prevScoreVal = history.length > 1 ? history[0].score : ent.base_risk;
     
+    // Detailed domain breakdown calculation for this sector
+    const domainBreakdown: Record<string, any> = {};
+    const defaultWeights: Record<string, number> = {
+      mil: 0.30,
+      cyb: 0.15,
+      avi: 0.10,
+      mar: 0.15,
+      mkt: 0.10,
+      dip: 0.10,
+      osi: 0.10
+    };
+    
+    let activeEventSum = 0;
+    let activeWeightSum = 0;
+    let spikedDomainsCount = 0;
+    
+    const domainsList = [
+      { id: 'mil', label: 'MILITARY / OSINT', source: 'GDELT 2.0 / ACLED' },
+      { id: 'avi', label: 'AVIATION', source: 'OpenSky Network' },
+      { id: 'mar', label: 'MARITIME', source: 'AISStream.io' },
+      { id: 'mkt', label: 'MARKETS', source: 'FRED VIX' },
+      { id: 'dip', label: 'DIPLOMATIC', source: 'UCDP Candidate GED' },
+      { id: 'cyb', label: 'CYBER', source: 'CISA Cyber RSS' },
+      { id: 'osi', label: 'OSINT / MEDIA', source: 'GDELT 2.0 AvgTone' },
+    ];
+    
+    for (const dom of domainsList) {
+      const domIndicators = dbIndicators.filter(ind => ind.domain === dom.id);
+      const isLive = domIndicators.some(ind => ind.is_live === 1);
+      
+      if (!isLive) {
+        domainBreakdown[dom.id] = {
+          status: 'NO_LIVE_FEED',
+          score: null,
+          indicators: []
+        };
+        continue;
+      }
+      
+      let indSum = 0;
+      let indCount = 0;
+      const indicatorsDetails: { source: string }[] = [];
+      
+      for (const ind of domIndicators) {
+        if (ind.id === 'avi_opensky_flights') continue; // Skip raw count
+        const hist = getTelemetryHistory(ent.code, ind.id, 1);
+        if (hist.length > 0) {
+          const norm = normalizeIndicator(ind.id, hist[0].raw_value);
+          indSum += norm;
+          indCount++;
+          indicatorsDetails.push({ source: dom.source });
+        }
+      }
+      
+      const scoreVal = indCount > 0 ? parseFloat((indSum / indCount).toFixed(1)) : 0;
+      domainBreakdown[dom.id] = {
+        status: 'ACTIVE',
+        score: scoreVal,
+        indicators: indicatorsDetails
+      };
+      
+      const weight = defaultWeights[dom.id] || 0.1;
+      activeEventSum += scoreVal * weight;
+      activeWeightSum += weight;
+      if (scoreVal > 50) spikedDomainsCount++;
+    }
+    
+    const rawEventScore = activeWeightSum > 0 ? activeEventSum / activeWeightSum : 0;
+    const clusterMultiplier = spikedDomainsCount >= 3 ? 1.0 + (spikedDomainsCount - 2) * 0.125 : 1.0;
+    const fastLayerScore = parseFloat((rawEventScore * clusterMultiplier).toFixed(1));
+
+    // Dynamic sources mapping
+    const integratedSources: string[] = [];
+    const unintegratedSources: string[] = [];
+    const sourcesInfo = [
+      { key: 'mil_gdelt_goldstein', name: 'GDELT' },
+      { key: 'avi_opensky_flights', name: 'OPENSKY' },
+      { key: 'cyb_cisa_alerts', name: 'CISA' },
+      { key: 'dip_news_advisory', name: 'UCDP' },
+      { key: 'mkt_fred_vix', name: 'FRED_VIX' },
+      { key: 'mar_ais_anom', name: 'AIS_STREAM' }
+    ];
+    
+    for (const sInfo of sourcesInfo) {
+      const ind = dbIndicators.find(i => i.id === sInfo.key);
+      if (ind && ind.is_live === 1) {
+        integratedSources.push(sInfo.name);
+      } else {
+        unintegratedSources.push(sInfo.name);
+      }
+    }
+
     return {
       code: ent.code,
       name: ent.name,
@@ -74,7 +166,15 @@ function compileDashboardState(): DashboardState {
       risk: scoreVal,
       prevRisk: prevScoreVal,
       delta: scoreVal - prevScoreVal,
-      lastUpdated: latestScore ? latestScore.timestamp : new Date().toISOString()
+      lastUpdated: latestScore ? latestScore.timestamp : new Date().toISOString(),
+      structuralPrior: ent.base_risk,
+      fastLayerScore,
+      clusterMultiplier,
+      domainBreakdown,
+      integratedSources,
+      unintegratedSources,
+      scoringVersion: 'v1.2.0-two-speed',
+      provenanceNotice: 'Open-source aggregated indicator composite. Not a proprietary war forecast.'
     };
   });
 

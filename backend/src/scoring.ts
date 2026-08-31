@@ -8,7 +8,7 @@ export interface DomainScore {
 }
 
 // Normalized metrics mapping: convert raw telemetry to 0-100 scale
-function normalizeIndicator(indicatorId: string, rawVal: number): number {
+export function normalizeIndicator(indicatorId: string, rawVal: number): number {
   switch (indicatorId) {
     case 'mil_gdelt_goldstein':
       // Goldstein scale: -10 (extreme conflict) to +10 (extreme cooperation)

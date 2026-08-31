@@ -1,5 +1,11 @@
 export type RiskBand = 'NOMINAL' | 'GUARDED' | 'ELEVATED' | 'HIGH' | 'SEVERE';
 
+export interface SectorDomainDetail {
+  status: 'ACTIVE' | 'NO_LIVE_FEED';
+  score: number | null;
+  indicators: { source: string }[];
+}
+
 export interface Sector {
   code: string;
   name: string;
@@ -9,6 +15,14 @@ export interface Sector {
   prevRisk: number | null;
   delta: number;
   lastUpdated: string;
+  structuralPrior: number;
+  fastLayerScore: number;
+  clusterMultiplier: number;
+  domainBreakdown: Record<string, SectorDomainDetail>;
+  integratedSources: string[];
+  unintegratedSources: string[];
+  scoringVersion: string;
+  provenanceNotice: string;
 }
 
 export interface DomainTelemetry {

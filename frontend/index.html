@@ -10,20 +10,17 @@
 
   <div class="crt-overlay"></div>
 
-  <div class="app">
+  <div id="app-container" class="app">
 
     <header class="hud-header">
       <div class="brand">
-        <svg width="30" height="30" viewBox="0 0 30 30">
-          <circle cx="15" cy="15" r="13" fill="none" stroke="#3A4657" stroke-width="1"/>
-          <circle cx="15" cy="15" r="8.5" fill="none" stroke="#5EC8C0" stroke-width="1"/>
+        <svg width="22" height="22" viewBox="0 0 30 30" style="vertical-align: middle; margin-right: 6px;">
+          <circle cx="15" cy="15" r="13" fill="none" stroke="#3A4657" stroke-width="1.5"/>
+          <circle cx="15" cy="15" r="8.5" fill="none" stroke="#5EC8C0" stroke-width="1.5"/>
           <circle cx="15" cy="15" r="2.4" fill="#E8A33D"/>
-          <line x1="15" y1="1" x2="15" y2="6" stroke="#5EC8C0" stroke-width="1"/>
+          <line x1="15" y1="1" x2="15" y2="6" stroke="#5EC8C0" stroke-width="1.5"/>
         </svg>
-        <div class="brand-text">
-          <div class="call-sign">ARGUS-9</div>
-          <div class="designation">GLOBAL ESCALATION MONITOR // LIVE BUILD</div>
-        </div>
+        <span style="letter-spacing: 1.5px;">ARGUS-9 // CONFLICT ESCALATION MONITOR</span>
       </div>
       <div class="header-right">
         <div class="sim-badge" id="hudStatusBadge"><span class="dot"></span>LIVE PIPELINE</div>
@@ -31,44 +28,53 @@
           <div class="time" id="clockTime">--:--:--</div>
           <div class="zone">UTC</div>
         </div>
-        <div class="sync-ring">
-          <svg width="34" height="34" viewBox="0 0 34 34">
-            <circle class="track" cx="17" cy="17" r="14"></circle>
-            <circle class="fill" id="syncFill" cx="17" cy="17" r="14" stroke-dasharray="87.9" stroke-dashoffset="0"></circle>
-          </svg>
-          <div class="num" id="syncNum">30</div>
+        <div style="display:flex; gap: 12px; align-items:center; border-left: 1px solid var(--border-color); padding-left: 16px;">
+          <span style="color: var(--text-muted); font-size: 10px; letter-spacing: 1px;">NEXT RECOMPUTE:</span>
+          <div class="sync-ring" style="width:28px; height:28px;">
+            <svg width="28" height="28" viewBox="0 0 34 34">
+              <circle class="track" cx="17" cy="17" r="14"></circle>
+              <circle class="fill" id="syncFill" cx="17" cy="17" r="14" stroke-dasharray="87.9" stroke-dashoffset="0"></circle>
+            </svg>
+            <div class="num" id="syncNum">30</div>
+          </div>
         </div>
-        <div class="live-chip"><span class="pulse" id="connectionPulse"></span><span id="connectionText">OFFLINE</span></div>
+        <div class="live-chip" style="margin-left: 8px;"><span class="pulse" id="connectionPulse"></span><span id="connectionText">OFFLINE</span></div>
       </div>
     </header>
 
-    <main class="hud-grid">
+    <main class="hud-grid main-grid">
 
-      <!-- LEFT: ranked index -->
-      <aside class="col col-scroll">
-        <div class="col-header">
-          <span>INSTABILITY INDEX</span>
-          <span id="idxUpdated" style="font-size:8px;color:var(--text-faint);"></span>
+      <!-- LEFT: Monitored Theaters (Entity List) -->
+      <aside class="col col-scroll" style="width: 320px;">
+        <div class="panel-header">
+          <span>MONITORED THEATERS</span>
+          <span id="idxUpdated" style="font-size:8px;color:var(--text-muted);"></span>
         </div>
-        <div class="idx-table-head">
-          <span>#</span>
-          <span>SECTOR</span>
-          <span style="text-align:right;">SCORE</span>
+        <div id="entity-list" style="overflow-y: auto;">
+          <!-- Populated dynamically via main.ts -->
         </div>
-        <div id="idxList"></div>
       </aside>
 
-      <!-- CENTER: situation display + gauge -->
-      <section class="col col-center">
-        <div class="situation-head">
-          <span class="situation-label">SITUATION DISPLAY</span>
+      <!-- CENTER: Situation Display & Composite Scoring -->
+      <section class="col col-scroll" style="flex: 1; border-left: 1px solid var(--border-color); border-right: 1px solid var(--border-color);">
+        <div class="panel-header">
+          <span>SITUATION DISPLAY & COMPOSITE SCORING</span>
           <div class="view-toggle">
             <button id="btnRadar" class="active">RADAR</button>
             <button id="btnGlobe">GLOBE</button>
           </div>
         </div>
 
-        <div class="display-stack">
+        <!-- Selected Theater Viewfinder Card -->
+        <div class="viewfinder-card" id="viewfinder-display">
+          <!-- Populated dynamically based on selected sector -->
+          <div style="text-align: center; color: var(--text-muted); padding: 20px 0;">
+            AWAITING PIPELINE DATA SYNC...
+          </div>
+        </div>
+
+        <!-- SVG Map/Radar Visualization -->
+        <div class="display-stack" style="margin: 0 auto 16px; max-width: 300px; aspect-ratio: 1/1;">
           <div class="radar-wrap" id="radarWrap">
             <svg viewBox="0 0 200 200" width="100%" height="100%">
               <circle cx="100" cy="100" r="40" fill="none" stroke="#1D2531" stroke-width="1"/>
@@ -108,57 +114,29 @@
           </div>
         </div>
 
-        <div class="gauge-wrap">
-          <svg width="180" height="180" viewBox="0 0 190 190">
-            <circle cx="95" cy="95" r="80" fill="none" stroke="#1D2531" stroke-width="9"/>
-            <circle id="gaugeFill" cx="95" cy="95" r="80" fill="none" stroke="#E8A33D" stroke-width="9"
-                    stroke-linecap="round" transform="rotate(-90 95 95)"
-                    stroke-dasharray="502.65" stroke-dashoffset="502.65"
-                    style="transition:stroke-dashoffset 1.1s ease, stroke 0.6s ease;"/>
-          </svg>
-          <div class="gauge-center">
-            <div class="gauge-num" id="gaugeNum">--</div>
-            <div class="gauge-label">COMPOSITE RISK INDEX</div>
-            <div class="gauge-band" id="gaugeBand">—</div>
-            <div class="gauge-delta" id="gaugeDelta">SINCE LAST SYNC</div>
+        <!-- Theater Domain Breakdown Grid -->
+        <div style="padding: 16px; border-top: 1px solid var(--border-color);">
+          <div style="font-size: 11px; color: var(--cyan-accent); margin-bottom: 12px; font-weight:600; letter-spacing: 0.5px;">THEATER DOMAIN BREAKDOWN</div>
+          <div id="domain-breakdown-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            <!-- Populated dynamically via main.ts -->
           </div>
         </div>
-        <div class="assessment" id="assessment"></div>
       </section>
 
-      <!-- RIGHT: tabbed panel (signals, brief, methodology) -->
-      <aside class="col">
+      <!-- RIGHT: Audit & Provenance Feed / Tabs -->
+      <aside class="col" style="width: 380px;">
         <div class="right-tabs">
           <button id="tabSignals" class="active">SIGNAL FEED</button>
           <button id="tabBrief">BRIEF</button>
-          <button id="tabMethod">METHODOLOGY</button>
+          <button id="tabAudit">AUDIT & PROVENANCE</button>
         </div>
         <div class="right-panes">
           <div class="pane col-scroll" id="paneSignals"></div>
           <div class="pane col-scroll hidden-view" id="paneBrief"></div>
-          <div class="pane col-scroll hidden-view" id="paneMethod" style="padding:15px;line-height:1.6;font-size:11px;">
-            <div class="method-head" style="color:var(--amber);margin-bottom:12px;font-weight:700;letter-spacing:1px;font-size:12px;">ARGUS-9 SCORING ENGINE</div>
-            <p style="color:var(--text-dim);margin-bottom:12px;">
-              This dashboard aggregates live open-source indicators using a <b>Two-Speed Risk Model</b>. It does not reflect proprietary intelligence or predictive certainty.
-            </p>
-            <div style="border:1px solid var(--line);padding:10px;background:var(--panel-raised);margin-bottom:12px;">
-              <b style="color:var(--cyan);display:block;margin-bottom:4px;">1. STRUCTURAL PRIOR (40%)</b>
-              Baseline country and border risk values initialized from historical conflict frequencies (UCDP/PITF statistics).
-            </div>
-            <div style="border:1px solid var(--line);padding:10px;background:var(--panel-raised);margin-bottom:12px;">
-              <b style="color:var(--cyan);display:block;margin-bottom:4px;">2. BEHAVIORAL EVENT LAYER (60%)</b>
-              Weighted moving average of active domain indicators. Normalization scales raw metrics to percentiles against 30-day baselines.
-            </div>
-            <div style="border:1px solid var(--line);padding:10px;background:var(--panel-raised);margin-bottom:12px;">
-              <b style="color:var(--cyan);display:block;margin-bottom:4px;">3. CLUSTERING PENALTY</b>
-              Simultaneous elevation across 3 or more domains triggers a synergy multiplier to reflect high-confidence correlation.
-            </div>
-            <div style="border:1px solid var(--line);padding:10px;background:var(--panel-raised);margin-bottom:12px;">
-              <b style="color:var(--cyan);display:block;margin-bottom:4px;">4. LAG ASYMMETRY</b>
-              Escalation signals trigger immediate index increases, while de-escalation fades out slowly via exponential decay.
-            </div>
-            <div style="font-size:9.5px;color:var(--text-faint);margin-top:20px;text-align:center;">
-              ARGUS-9 SCORING ENGINE // VERSION 1.0.0
+          <div class="pane col-scroll hidden-view" id="paneAudit" style="padding: 16px;">
+            <!-- Dynamic data integrity and source list -->
+            <div id="audit-panel-content">
+              <!-- Populated dynamically via main.ts -->
             </div>
           </div>
         </div>
@@ -167,7 +145,7 @@
     </main>
 
     <footer class="ticker">
-      <div class="ticker-tag">FEED</div>
+      <div class="ticker-tag" style="background: var(--danger-red); color: white; padding: 0 8px; font-weight: bold; margin-right: 12px; font-size: 9.5px; height: 100%; display: flex; align-items: center;">STATUS</div>
       <div class="ticker-track anim" id="tickerTrack"></div>
     </footer>
 
